@@ -1,8 +1,7 @@
-from telegram import Update
-import json
 import os
-
-
+import json
+import threading
+from flask import Flask
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -12,148 +11,117 @@ from telegram.ext import (
     ContextTypes,
 )
 
-import os
+# ==============================
+# Flask (чтобы Render видел порт)
+# ==============================
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot is running!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+# ==============================
+# Telegram Bot
+# ==============================
+
 TOKEN = os.getenv("BOT_TOKEN")
 
-# Хранилище задач по user_id
-users = {}
+DATA_FILE = "tasks.json"
 
 
-class Task:
-    def __init__(self, title, completed=False):
-        self.title = title
-        self.completed = completed
-
-    def mark_done(self):
-        self.completed = True
-
-    def __str__(self):
-        status = "✅" if self.completed else "⬜"
-        return f"{status} {self.title}"
+def load_tasks():
+    try:
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
 
 
-# --- Команды ---
+def save_tasks(data):
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+
+users = load_tasks()
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    users[user_id] = []
     await update.message.reply_text(
-        "Привет! 👋\n"
-        "Просто напиши задачу — я её добавлю.\n\n"
-        "Команды:\n"
-        "/show — показать задачи\n"
-        "/delete N — удалить задачу\n"
-        "/done N — завершить задачу"
+        "Привет 👋\n\n"
+        "/add текст — добавить задачу\n"
+        "/list — показать задачи\n"
+        "/done номер — завершить задачу"
     )
 
 
 async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    text = update.message.text
+    user_id = str(update.effective_user.id)
+    text = " ".join(context.args)
 
-    if user_id not in users:
-        users[user_id] = []
+    if not text:
+        await update.message.reply_text("Напиши текст задачи после /add")
+        return
 
-    users[user_id].append(Task(text))
-    save_data()
+    users.setdefault(user_id, [])
+    users[user_id].append({"title": text, "completed": False})
+    save_tasks(users)
+
     await update.message.reply_text("✅ Задача добавлена!")
 
 
-async def show_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
 
     if user_id not in users or not users[user_id]:
         await update.message.reply_text("Список задач пуст.")
         return
 
-    tasks_text = "\n".join(
-        f"{i+1}. {task}" for i, task in enumerate(users[user_id])
-    )
+    message = ""
+    for i, task in enumerate(users[user_id], 1):
+        status = "✅" if task["completed"] else "⬜"
+        message += f"{i}. {status} {task['title']}\n"
 
-    await update.message.reply_text(tasks_text)
+    await update.message.reply_text(message)
 
 
-async def delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-
-    if user_id not in users or not users[user_id]:
-        await update.message.reply_text("Список задач пуст.")
-        return
+async def done_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
 
     if not context.args:
-        await update.message.reply_text("Используй: /delete номер")
+        await update.message.reply_text("Укажи номер задачи.")
         return
 
     try:
         index = int(context.args[0]) - 1
-        removed = users[user_id].pop(index)
-        save_data()
-        await update.message.reply_text(f"Удалена задача: {removed.title}")
-    except ValueError:
-        await update.message.reply_text("Номер должен быть числом!")
-    except IndexError:
-        await update.message.reply_text("Задачи с таким номером нет!")
+        users[user_id][index]["completed"] = True
+        save_tasks(users)
+        await update.message.reply_text("🎉 Задача выполнена!")
+    except:
+        await update.message.reply_text("Неверный номер задачи.")
 
 
-async def complete_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+def main():
+    if not TOKEN:
+        raise ValueError("BOT_TOKEN не найден!")
 
-    if user_id not in users or not users[user_id]:
-        await update.message.reply_text("Список задач пуст.")
-        return
+    application = ApplicationBuilder().token(TOKEN).build()
 
-    if not context.args:
-        await update.message.reply_text("Используй: /done номер")
-        return
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("add", add_task))
+    application.add_handler(CommandHandler("list", list_tasks))
+    application.add_handler(CommandHandler("done", done_task))
 
-    try:
-        index = int(context.args[0]) - 1
-        users[user_id][index].mark_done()
-        save_data()
-        await update.message.reply_text("✅ Задача отмечена выполненной!")
-    except ValueError:
-        await update.message.reply_text("Номер должен быть числом!")
-    except IndexError:
-        await update.message.reply_text("Задачи с таким номером нет!")
+    # Запускаем Flask в отдельном потоке
+    threading.Thread(target=run_web).start()
+
+    # Запускаем бота
+    application.run_polling()
 
 
-def save_data():
-    data = {}
-
-    for user_id, tasks in users.items():
-        data[user_id] = [
-            {"title": task.title, "completed": task.completed}
-            for task in tasks
-        ]
-
-    with open("tasks.json", "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
-
-
-def load_data():
-    if not os.path.exists("tasks.json"):
-        return
-
-    with open("tasks.json", "r", encoding="utf-8") as f:
-        data = json.load(f)
-
-        for user_id, tasks in data.items():
-            users[int(user_id)] = [
-                Task(task["title"], task["completed"])
-                for task in tasks
-            ]
-
-# --- Запуск бота ---
-
-app = ApplicationBuilder().token(TOKEN).build()
-
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("show", show_tasks))
-app.add_handler(CommandHandler("delete", delete_task))
-app.add_handler(CommandHandler("done", complete_task))
-
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, add_task))
-
-load_data()
-
-app.run_polling()
+if __name__ == "__main__":
+    main()
