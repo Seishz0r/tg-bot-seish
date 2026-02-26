@@ -1,15 +1,31 @@
 import os
 import json
+import threading
+from flask import Flask
 from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    ContextTypes,
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 TOKEN = os.getenv("BOT_TOKEN")
 DATA_FILE = "tasks.json"
 
+# ======================
+# Flask (для Render)
+# ======================
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+
+# ======================
+# Работа с задачами
+# ======================
 
 def load_tasks():
     try:
@@ -18,14 +34,16 @@ def load_tasks():
     except:
         return {}
 
-
 def save_tasks(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-
 users = load_tasks()
 
+
+# ======================
+# Команды бота
+# ======================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -34,7 +52,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/list — показать задачи\n"
         "/done номер — завершить задачу"
     )
-
 
 async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -50,7 +67,6 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("✅ Задача добавлена!")
 
-
 async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
 
@@ -64,7 +80,6 @@ async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message += f"{i}. {status} {task['title']}\n"
 
     await update.message.reply_text(message)
-
 
 async def done_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -82,6 +97,10 @@ async def done_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Неверный номер задачи.")
 
 
+# ======================
+# Запуск
+# ======================
+
 def main():
     if not TOKEN:
         raise ValueError("BOT_TOKEN не найден!")
@@ -93,7 +112,11 @@ def main():
     application.add_handler(CommandHandler("list", list_tasks))
     application.add_handler(CommandHandler("done", done_task))
 
-    application.run_polling()
+    # Flask запускаем в отдельном потоке
+    threading.Thread(target=run_flask).start()
+
+    # Важно для Render
+    application.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
