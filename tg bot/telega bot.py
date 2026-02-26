@@ -1,5 +1,6 @@
 import os
 import json
+import asyncio
 from flask import Flask, request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -10,7 +11,9 @@ DATA_FILE = "tasks.json"
 
 app = Flask(__name__)
 
-# ===== Работа с задачами =====
+# ======================
+# Работа с задачами
+# ======================
 
 def load_tasks():
     try:
@@ -25,9 +28,15 @@ def save_tasks(data):
 
 users = load_tasks()
 
-# ===== Бот =====
+# ======================
+# Создание бота
+# ======================
 
 application = ApplicationBuilder().token(TOKEN).build()
+
+# ======================
+# Команды
+# ======================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -85,22 +94,30 @@ application.add_handler(CommandHandler("add", add_task))
 application.add_handler(CommandHandler("list", list_tasks))
 application.add_handler(CommandHandler("done", done_task))
 
-# ===== Flask маршруты =====
+# ======================
+# Flask маршруты
+# ======================
 
 @app.route("/")
 def home():
     return "Bot is running!"
 
 @app.route(f"/{TOKEN}", methods=["POST"])
-async def webhook():
+def webhook():
     data = request.get_json(force=True)
     update = Update.de_json(data, application.bot)
-    await application.process_update(update)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    loop.run_until_complete(application.initialize())
+    loop.run_until_complete(application.process_update(update))
+
     return "ok"
 
+# ======================
+# Запуск
+# ======================
+
 if __name__ == "__main__":
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        webhook_url=f"https://tg-bot-seish.onrender.com/{TOKEN}"
-    )
+    app.run(host="0.0.0.0", port=PORT)
