@@ -116,11 +116,15 @@ def main():
     application.add_handler(CommandHandler("list", list_tasks))
     application.add_handler(CommandHandler("done", done_task))
 
-    # Запускаем Flask в отдельном потоке
-    threading.Thread(target=run_web).start()
+    # запускаем бота в отдельном потоке
+    def run_bot():
+        application.run_polling()
 
-    # Запускаем бота
-    application.run_polling()
+    threading.Thread(target=run_bot).start()
+
+    # запускаем Flask (главный процесс)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 
 
 if __name__ == "__main__":
