@@ -106,8 +106,12 @@ async def done_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
+    print("TOKEN:", TOKEN)
+
     if not TOKEN:
         raise ValueError("BOT_TOKEN не найден!")
+
+    print("Starting bot...")
 
     application = ApplicationBuilder().token(TOKEN).build()
 
